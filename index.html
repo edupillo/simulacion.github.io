@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Simulador de Apuestas</title>
+  <link rel="icon" href="file:///C:/Users/Federico/Downloads/logo.png" type="image/png">
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; padding: 20px; }
+    h1 { text-align: center; }
+    .apuesta, .escenario, #resumenFinal, #resumenBusqueda { background: white; padding: 10px; margin: 10px 0; border-radius: 5px; }
+    input { margin: 5px; }
+    button { margin: 5px; padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    #resumenFinal, #resumenBusqueda { background: #dff0d8; border-left: 5px solid #3c763d; }
+    .filtro { background: #fff; padding: 10px; margin: 10px 0; border-radius: 5px; }
+    .gray-line { margin: 5px 0; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Simulador de Apuestas (cantidad variable)</h1>
+  <label for="cantidad">Cantidad de apuestas:</label>
+  <input type="number" id="cantidad" min="1" max="20" value="6">
+  <button onclick="generarCampos()">Generar Apuestas</button>
+  <button onclick="reiniciar()">Reiniciar</button>
+
+  <div id="apuestas-container"></div>
+  <button onclick="calcularEscenarios()">Calcular Escenarios</button>
+  <button onclick="ordenarPorGanancia()">Ordenar por Ganancia</button>
+  <button onclick="ordenarPorProbabilidad()">Ordenar por Probabilidad</button>
+
+  <div class="filtro">
+    <label>Buscar escenario:</label>
+    <input type="number" id="buscarEscenario" min="1">
+    <label>Resultado:</label>
+    <select id="buscarResultado">
+      <option value="">--</option>
+      <option value="ganado">Ganado</option>
+      <option value="perdido">Perdido</option>
+    </select>
+    <button onclick="buscar()">Buscar</button>
+    <button onclick="borrarBusqueda()">Borrar Búsqueda</button>
+    <button onclick="ordenarBusqueda('ganancia')">Ordenar búsqueda por Ganancia</button>
+    <button onclick="ordenarBusqueda('probabilidad')">Ordenar búsqueda por Probabilidad</button>
+  </div>
+
+  <div id="resultados"></div>
+  <div id="resumenFinal"></div>
+  <div id="resumenBusqueda"></div>
+
+  <script>
+    let apuestas = [];
+    let escenariosGlobal = [];
+    let resultadosBusqueda = [];
+
+    function cuotaAprob(cuota) {
+      if (cuota <= 1.01) return 0.999;
+      if (cuota >= 50) return 0.0001;
+      return Math.max(0.0001, Math.min(0.999, 1 / cuota));
+    }
+
+    function generarCampos() {
+      const cantidad = parseInt(document.getElementById('cantidad').value);
+      const container = document.getElementById('apuestas-container');
+      apuestas = [];
+      container.innerHTML = '';
+      for (let i = 0; i < cantidad; i++) {
+        apuestas.push({ monto: '', cuota: '' });
+        const div = document.createElement('div');
+        div.className = 'apuesta';
+        div.innerHTML = ` 
+          <strong>Apuesta ${i + 1}</strong><br>
+          Monto: <input type="number" onchange="updateApuesta(${i}, 'monto', this.value)">
+          Cuota: <input type="number" onchange="updateApuesta(${i}, 'cuota', this.value)">
+        `;
+        container.appendChild(div);
+      }
+    }
+
+    function updateApuesta(index, campo, valor) {
+      apuestas[index][campo] = parseFloat(valor);
+    }
+
+    function calcularEscenarios() {
+      const resultadosDiv = document.getElementById('resultados');
+      const resumenDiv = document.getElementById('resumenFinal');
+      const resumenBusqueda = document.getElementById('resumenBusqueda');
+      resultadosDiv.innerHTML = '';
+      resumenDiv.innerHTML = '';
+      resumenBusqueda.innerHTML = '';
+
+      const cantidad = apuestas.length;
+      const total = Math.pow(2, cantidad);
+      const inversion = apuestas.reduce((acc, ap) => acc + (parseFloat(ap.monto) || 0), 0);
+      let ganadores = 0, perdedores = 0;
+      let escenarios = [];
+
+      for (let i = 0; i < total; i++) {
+        const bin = i.toString(2).padStart(cantidad, '0');
+        let ganancia = 0;
+        let probabilidad = 1;
+        let resultados = [];
+
+        for (let j = 0; j < cantidad; j++) {
+          const gana = bin[j] === '1';
+          const { monto, cuota } = apuestas[j];
+          const prob = cuotaAprob(cuota || 1);
+          if (gana && !isNaN(monto) && !isNaN(cuota)) {
+            ganancia += monto * cuota;
+            probabilidad *= prob;
+            resultados.push(`Apuesta ${j + 1}: GANÓ ($${monto} x ${cuota}) - ${Math.round(prob * 100)}%`);
+          } else {
+            probabilidad *= (1 - prob);
+            resultados.push(`Apuesta ${j + 1}: PERDIÓ ($${monto || 0}) - ${Math.round((1 - prob) * 100)}%`);
+          }
+        }
+
+        const neta = ganancia - inversion;
+        if (neta > 0) ganadores++; else perdedores++;
+        escenarios.push({ index: i + 1, resultados, ganancia: neta, probabilidad });
+      }
+
+      escenariosGlobal = escenarios;
+      resultadosBusqueda = [];
+      mostrarEscenarios(escenarios, "index");
+
+      const ganadoresEscenarios = escenarios.filter(e => e.ganancia > 0);
+      const perdedoresEscenarios = escenarios.filter(e => e.ganancia <= 0);
+      const promedioGanancia = ganadoresEscenarios.reduce((acc, e) => acc + e.ganancia, 0) / ganadoresEscenarios.length || 0;
+      const promedioPerdida = perdedoresEscenarios.reduce((acc, e) => acc + e.ganancia, 0) / perdedoresEscenarios.length || 0;
+
+      const probabilidadGanadores = ganadoresEscenarios.reduce((acc, e) => acc + e.probabilidad, 0) / ganadoresEscenarios.length || 0;
+      const probabilidadPerdedores = perdedoresEscenarios.reduce((acc, e) => acc + e.probabilidad, 0) / perdedoresEscenarios.length || 0;
+
+      const totalProbabilidad = probabilidadGanadores + probabilidadPerdedores;
+      const probabilidadGanadoresPorc = (probabilidadGanadores / totalProbabilidad) * 100;
+      const probabilidadPerdedoresPorc = (probabilidadPerdedores / totalProbabilidad) * 100;
+
+      resumenDiv.innerHTML = `
+        De los ${total} escenarios:<br>
+        ✅ ${ganadores} terminan en ganancia (${((ganadores / total) * 100).toFixed(2)}%)<br>
+        ❌ ${perdedores} terminan en pérdida o empate (${((perdedores / total) * 100).toFixed(2)}%)<br>
+        <div class="gray-line">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+        ➖ Promedio de Ganancia: $${promedioGanancia.toFixed(2)}<br>
+        ➖ Probabilidad de que ocurra un escenario ganador: ${probabilidadGanadoresPorc.toFixed(2)}%<br>
+        <div class="gray-line">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+        ➖ Promedio de Pérdida: $${promedioPerdida.toFixed(2)}<br>
+        ➖ Probabilidad de que ocurra un escenario perdedor: ${probabilidadPerdedoresPorc.toFixed(2)}%<br>
+      `;
+    }
+
+    function mostrarEscenarios(lista, orden = "index") {
+      const resultadosDiv = document.getElementById('resultados');
+      resultadosDiv.innerHTML = '';
+
+      if (orden === "ganancia") {
+        lista.sort((a, b) => b.ganancia - a.ganancia);
+      } else if (orden === "probabilidad") {
+        lista.sort((a, b) => b.probabilidad - a.probabilidad);
+      } else {
+        lista.sort((a, b) => a.index - b.index); // ordena por número de escenario
+      }
+
+      lista.forEach((esc) => {
+        const div = document.createElement('div');
+        div.className = 'escenario';
+        div.innerHTML = `<strong>Escenario ${esc.index} - Ganancia Neta: $${esc.ganancia.toFixed(2)} - Prob: ${(esc.probabilidad * 100).toFixed(2)}%</strong><br>${esc.resultados.join('<br>')}`;
+        resultadosDiv.appendChild(div);
+      });
+    }
+
+    function buscar() {
+      const numero = parseInt(document.getElementById('buscarEscenario').value);
+      const resultado = document.getElementById('buscarResultado').value;
+      const resumenBusqueda = document.getElementById('resumenBusqueda');
+
+      let filtrado = escenariosGlobal;
+
+      if (!isNaN(numero) && numero >= 1 && resultado !== '') {
+        filtrado = filtrado.filter(e => {
+          return e.resultados[numero - 1]?.includes(resultado === 'ganado' ? 'GANÓ' : 'PERDIÓ');
+        });
+      }
+
+      resultadosBusqueda = filtrado;
+      mostrarEscenarios(filtrado, "ganancia");
+
+      const ganadores = filtrado.filter(e => e.ganancia > 0).length;
+      const perdedores = filtrado.length - ganadores;
+      const promedioGanancia = filtrado.filter(e => e.ganancia > 0).reduce((acc, e) => acc + e.ganancia, 0) / ganadores || 0;
+      const promedioPerdida = filtrado.filter(e => e.ganancia <= 0).reduce((acc, e) => acc + e.ganancia, 0) / perdedores || 0;
+
+      const probabilidadGanadores = filtrado.filter(e => e.ganancia > 0).reduce((acc, e) => acc + e.probabilidad, 0) / ganadores || 0;
+      const probabilidadPerdedores = filtrado.filter(e => e.ganancia <= 0).reduce((acc, e) => acc + e.probabilidad, 0) / perdedores || 0;
+
+      resumenBusqueda.innerHTML = `
+        De los ${filtrado.length} resultados de la búsqueda:<br>
+        ✅ ${ganadores} terminan en ganancia (${((ganadores / filtrado.length) * 100).toFixed(2)}%)<br>
+        ❌ ${perdedores} terminan en pérdida o empate (${((perdedores / filtrado.length) * 100).toFixed(2)}%)<br>
+        <div class="gray-line">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+        ➖ Promedio de Ganancia: $${promedioGanancia.toFixed(2)}<br>
+        ➖ Probabilidad de que ocurra un escenario ganador: ${(probabilidadGanadores / (probabilidadGanadores + probabilidadPerdedores) * 100).toFixed(2)}%<br>
+        <div class="gray-line">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+        ➖ Promedio de Pérdida: $${promedioPerdida.toFixed(2)}<br>
+        ➖ Probabilidad de que ocurra un escenario perdedor: ${(probabilidadPerdedores / (probabilidadGanadores + probabilidadPerdedores) * 100).toFixed(2)}%<br>
+      `;
+    }
+
+    function borrarBusqueda() {
+      document.getElementById('buscarEscenario').value = '';
+      document.getElementById('buscarResultado').value = '';
+      mostrarEscenarios(escenariosGlobal, "ganancia");
+      document.getElementById('resumenBusqueda').innerHTML = '';
+    }
+
+    function ordenarBusqueda(orden) {
+      mostrarEscenarios(resultadosBusqueda, orden);
+    }
+
+    function ordenarPorGanancia() {
+      mostrarEscenarios(escenariosGlobal, "ganancia");
+    }
+
+    function ordenarPorProbabilidad() {
+      mostrarEscenarios(escenariosGlobal, "probabilidad");
+    }
+
+    function reiniciar() {
+      apuestas = [];
+      escenariosGlobal = [];
+      resultadosBusqueda = [];
+      document.getElementById('apuestas-container').innerHTML = '';
+      document.getElementById('resultados').innerHTML = '';
+      document.getElementById('resumenFinal').innerHTML = '';
+      document.getElementById('resumenBusqueda').innerHTML = '';
+    }
+  </script>
+</body>
+</html>
+
